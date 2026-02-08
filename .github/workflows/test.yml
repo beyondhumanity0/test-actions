@@ -1,4 +1,4 @@
-name: Build Static Bash 5.3
+name: Build Static Bash 5.3 (Pkg-Config)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
       - name: Install Build Tools
         run: |
           apk update
-          apk add --no-cache build-base curl linux-headers bison
+          apk add --no-cache build-base curl linux-headers bison pkgconfig
 
       - name: Build Static Ncurses
         run: |
@@ -22,9 +22,10 @@ jobs:
           tar -xzf "ncurses-$NCURSES_VER.tar.gz"
           cd ncurses-$NCURSES_VER
           
-          # Use -fPIC and -std=gnu89 for ncurses to handle older macro definitions
           export CFLAGS="-Os -fPIC -std=gnu89"
           
+          # --enable-pc-files: Generates the .pc files pkg-config needs
+          # --with-pkg-config-libdir: Defines where those .pc files go
           ./configure \
             --prefix=/usr/local \
             --without-shared \
@@ -33,27 +34,34 @@ jobs:
             --without-cxx \
             --enable-static \
             --with-termlib \
-            --enable-pc-files
+            --disable-widec \
+            --enable-pc-files \
+            --with-pkg-config-libdir=/usr/local/lib/pkgconfig
           
           make -j$(nproc)
           make install
 
       - name: Build Static Bash 5.3
         run: |
-          # Downloading Bash 5.3 (Alpha/RC/Release)
-          # Note: If 5.3 is not in the 'gnu' folder yet, it is in 'bash-testing'
           curl -LO "https://ftp.gnu.org/gnu/bash/bash-5.3-alpha.tar.gz" || \
           curl -LO "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
           
           tar -xzf bash-5.3*.tar.gz
           cd bash-5.3*
           
-          # CFLAGS for GCC 14 compatibility
-          # We force gnu11 which is a good middle ground for Bash 5.3
+          # Environment variables for pkg-config and compiler
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
           export CFLAGS="-Os -static -std=gnu11 -Wno-implicit-int -Wno-implicit-function-declaration"
           export CFLAGS_FOR_BUILD="-std=gnu11 -Wno-implicit-int -Wno-implicit-function-declaration"
+          
+          # Query pkg-config for ncurses flags
+          # This automatically handles -lncurses, -ltinfo, and the correct search paths
+          NCURSES_LIBS=$(pkg-config --libs --static ncurses)
+          NCURSES_CFLAGS=$(pkg-config --cflags ncurses)
+          
           export LDFLAGS="-static -L/usr/local/lib"
-          export CPPFLAGS="-I/usr/local/include"
+          export LIBS="$NCURSES_LIBS"
+          export CPPFLAGS="-I/usr/local/include $NCURSES_CFLAGS"
           
           ./configure \
             --enable-static-link \
@@ -62,20 +70,21 @@ jobs:
             --with-curses \
             --enable-readline
           
-          make -j$(nproc)
+          # Use the libs discovered by pkg-config during the final link
+          make -j$(nproc) LIBS="$NCURSES_LIBS"
+          
           strip bash
 
       - name: Verify Binary
         run: |
-          # Use find to handle the folder name if it has -alpha suffix
           cd bash-5.3*
           echo "--- Binary Info ---"
           file bash
-          ldd bash || echo "Static Check Passed"
+          ldd bash || echo "Static check passed"
           ./bash --version
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bash-5.3-static
+          name: bash-5.3-static-pkgconfig
           path: bash-5.3*/bash
