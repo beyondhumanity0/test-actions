@@ -1,37 +1,63 @@
-name: Build Readline
+name: Build Static ncurses
 
 on:
-  workflow_dispatch:   # You can trigger it manually
+  workflow_dispatch:  # can trigger manually
   push:
     branches:
       - main
 
 jobs:
-  build-readline:
+  build-ncurses:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Check out the repo (optional)
-      - uses: actions/checkout@v3
-
-      # 2. Install dependencies (build tools)
+      # 1. Install build dependencies
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential wget tar
+          sudo apt-get install -y build-essential wget tar pkg-config
 
-      # 3. Download the GNU Readline tarball
-      - name: Download Readline 8.3
+      # 2. Download ncurses 6.6
+      - name: Download ncurses
         run: |
-          wget https://ftpmirror.gnu.org/gnu/readline/readline-8.3.tar.gz
+          wget https://ftpmirror.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz
 
-      # 4. Extract it
-      - name: Extract Readline
+      # 3. Extract
+      - name: Extract ncurses
         run: |
-          tar -xzf readline-8.3.tar.gz
+          tar -xzf ncurses-6.6.tar.gz
 
-      # 5. Run ./configure
-      - name: Configure Readline
+      # 4. Configure static build
+      - name: Configure ncurses for static build
         run: |
-          cd readline-8.3
-          ./configure
+          cd ncurses-6.6
+          ./configure \
+            --prefix=$PWD/build \
+            --with-shared=no \
+            --with-static=yes \
+            --enable-widec \
+            --without-debug \
+            --without-normal \
+            --without-manpages \
+            --without-tests \
+            --without-cxx-binding
+
+      # 5. Build and install
+      - name: Build and install
+        run: |
+          cd ncurses-6.6
+          make -j$(nproc)
+          make install
+
+      # 6. Package into tarball
+      - name: Package tarball
+        run: |
+          cd ncurses-6.6
+          tar -czf ncurses-6.6-static.tar.gz -C build .
+
+      # 7. Upload artifact
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ncurses-6.6-static
+          path: ncurses-6.6/ncurses-6.6-static.tar.gz
