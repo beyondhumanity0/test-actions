@@ -1,11 +1,11 @@
-name: Build Robust Static Bash
+name: Build Static Bash 5.3
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Compile Static Bash (Source Deps)
+    name: Build Static Bash 5.3
     runs-on: ubuntu-latest
     container: alpine:latest
     
@@ -13,20 +13,18 @@ jobs:
       - name: Install Build Tools
         run: |
           apk update
-          apk add --no-cache build-base curl linux-headers
+          apk add --no-cache build-base curl linux-headers bison
 
       - name: Build Static Ncurses
         run: |
-          # 1. Download Ncurses
-          NCURSES_VER="6.4"
+          NCURSES_VER="6.5"
           curl -LO "https://ftp.gnu.org/gnu/ncurses/ncurses-$NCURSES_VER.tar.gz"
           tar -xzf "ncurses-$NCURSES_VER.tar.gz"
           cd ncurses-$NCURSES_VER
           
-          # 2. Configure Ncurses for static usage
-          # --without-shared: Only build .a files
-          # --with-termlib: Includes terminal capability database support (crucial for Bash)
-          # --enable-pc-files: Helps build process find the libraries
+          # Use -fPIC and -std=gnu89 for ncurses to handle older macro definitions
+          export CFLAGS="-Os -fPIC -std=gnu89"
+          
           ./configure \
             --prefix=/usr/local \
             --without-shared \
@@ -40,18 +38,20 @@ jobs:
           make -j$(nproc)
           make install
 
-      - name: Build Static Bash
+      - name: Build Static Bash 5.3
         run: |
-          # 1. Download Bash
-          BASH_VER="5.2.21"
-          curl -LO "https://ftp.gnu.org/gnu/bash/bash-$BASH_VER.tar.gz"
-          tar -xzf "bash-$BASH_VER.tar.gz"
-          cd bash-$BASH_VER
+          # Downloading Bash 5.3 (Alpha/RC/Release)
+          # Note: If 5.3 is not in the 'gnu' folder yet, it is in 'bash-testing'
+          curl -LO "https://ftp.gnu.org/gnu/bash/bash-5.3-alpha.tar.gz" || \
+          curl -LO "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
           
-          # 2. Configure Bash
-          # --disable-nls: Disables native language support (avoids complex libintl/iconv link errors)
-          # LDFLAGS="-static": Forces static linking for the final binary
-          export CFLAGS="-Os -static"
+          tar -xzf bash-5.3*.tar.gz
+          cd bash-5.3*
+          
+          # CFLAGS for GCC 14 compatibility
+          # We force gnu11 which is a good middle ground for Bash 5.3
+          export CFLAGS="-Os -static -std=gnu11 -Wno-implicit-int -Wno-implicit-function-declaration"
+          export CFLAGS_FOR_BUILD="-std=gnu11 -Wno-implicit-int -Wno-implicit-function-declaration"
           export LDFLAGS="-static -L/usr/local/lib"
           export CPPFLAGS="-I/usr/local/include"
           
@@ -62,26 +62,20 @@ jobs:
             --with-curses \
             --enable-readline
           
-          # 3. Compile
           make -j$(nproc)
-          
-          # 4. Strip symbols
           strip bash
 
       - name: Verify Binary
         run: |
-          cd bash-5.2.21
-          echo "--- File Type ---"
+          # Use find to handle the folder name if it has -alpha suffix
+          cd bash-5.3*
+          echo "--- Binary Info ---"
           file bash
-          
-          echo "--- Linker Check (Should be empty or error) ---"
-          ldd bash || echo "Success: Not a dynamic executable"
-          
-          echo "--- Run Check ---"
+          ldd bash || echo "Static Check Passed"
           ./bash --version
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bash-static-robust
-          path: bash-5.2.21/bash
+          name: bash-5.3-static
+          path: bash-5.3*/bash
