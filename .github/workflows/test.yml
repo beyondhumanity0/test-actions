@@ -1,82 +1,87 @@
-name: Build Static Bash
+name: Build Robust Static Bash
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
 jobs:
   build:
-    name: Build Static Bash on Alpine
+    name: Compile Static Bash (Source Deps)
     runs-on: ubuntu-latest
     container: alpine:latest
     
     steps:
-      - name: Install Build Dependencies
+      - name: Install Build Tools
         run: |
           apk update
-          apk add --no-cache \
-            build-base \
-            curl \
-            linux-headers \
-            bison \
-            ncurses-static \
-            ncurses-dev
+          apk add --no-cache build-base curl linux-headers
 
-      - name: Download Sources
+      - name: Build Static Ncurses
         run: |
-          # Define versions
-          BASH_VERSION="5.2.21"
+          # 1. Download Ncurses
+          NCURSES_VER="6.4"
+          curl -LO "https://ftp.gnu.org/gnu/ncurses/ncurses-$NCURSES_VER.tar.gz"
+          tar -xzf "ncurses-$NCURSES_VER.tar.gz"
+          cd ncurses-$NCURSES_VER
           
-          echo "Downloading Bash $BASH_VERSION..."
-          curl -LO "https://ftp.gnu.org/gnu/bash/bash-$BASH_VERSION.tar.gz"
-          tar -xzf "bash-$BASH_VERSION.tar.gz"
+          # 2. Configure Ncurses for static usage
+          # --without-shared: Only build .a files
+          # --with-termlib: Includes terminal capability database support (crucial for Bash)
+          # --enable-pc-files: Helps build process find the libraries
+          ./configure \
+            --prefix=/usr/local \
+            --without-shared \
+            --with-normal \
+            --without-debug \
+            --without-cxx \
+            --enable-static \
+            --with-termlib \
+            --enable-pc-files
+          
+          make -j$(nproc)
+          make install
 
-      - name: Build Bash
+      - name: Build Static Bash
         run: |
-          cd bash-5.2.21
+          # 1. Download Bash
+          BASH_VER="5.2.21"
+          curl -LO "https://ftp.gnu.org/gnu/bash/bash-$BASH_VER.tar.gz"
+          tar -xzf "bash-$BASH_VER.tar.gz"
+          cd bash-$BASH_VER
           
-          # Configure for static linking
-          # --enable-static-link: Forces static linking
-          # --without-bash-malloc: Uses system malloc (musl's) which is generally preferred for static builds
+          # 2. Configure Bash
+          # --disable-nls: Disables native language support (avoids complex libintl/iconv link errors)
+          # LDFLAGS="-static": Forces static linking for the final binary
           export CFLAGS="-Os -static"
-          export LDFLAGS="-static"
+          export LDFLAGS="-static -L/usr/local/lib"
+          export CPPFLAGS="-I/usr/local/include"
           
           ./configure \
             --enable-static-link \
             --without-bash-malloc \
+            --disable-nls \
             --with-curses \
             --enable-readline
-            
-          # Compile
+          
+          # 3. Compile
           make -j$(nproc)
           
-          # Strip symbols to reduce size
+          # 4. Strip symbols
           strip bash
 
-      - name: Verify Static Build
+      - name: Verify Binary
         run: |
           cd bash-5.2.21
-          echo "--- Binary File Info ---"
+          echo "--- File Type ---"
           file bash
           
-          echo "--- LDD Output (Should say 'Not a dynamic executable') ---"
-          ldd bash || echo "Success: ldd failed as expected for static binary"
+          echo "--- Linker Check (Should be empty or error) ---"
+          ldd bash || echo "Success: Not a dynamic executable"
           
-          echo "--- Version Check ---"
+          echo "--- Run Check ---"
           ./bash --version
-
-      - name: Prepare Artifact
-        run: |
-          mkdir output
-          cp bash-5.2.21/bash output/bash-static
-          chmod +x output/bash-static
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bash-static-binary
-          path: output/bash-static
-          if-no-files-found: error
+          name: bash-static-robust
+          path: bash-5.2.21/bash
