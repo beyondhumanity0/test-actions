@@ -1,63 +1,82 @@
-name: Build Static ncurses
+name: Build Static Bash
 
 on:
-  workflow_dispatch:   # manual trigger
+  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
-  build-ncurses:
+  build:
+    name: Build Static Bash on Alpine
     runs-on: ubuntu-latest
-
+    container: alpine:latest
+    
     steps:
-      # 1. Install build dependencies
-      - name: Install build dependencies
+      - name: Install Build Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential wget tar pkg-config
+          apk update
+          apk add --no-cache \
+            build-base \
+            curl \
+            linux-headers \
+            bison \
+            ncurses-static \
+            ncurses-dev
 
-      # 2. Download GNU ncurses 6.6
-      - name: Download ncurses
+      - name: Download Sources
         run: |
-          wget https://ftpmirror.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz
+          # Define versions
+          BASH_VERSION="5.2.21"
+          
+          echo "Downloading Bash $BASH_VERSION..."
+          curl -LO "https://ftp.gnu.org/gnu/bash/bash-$BASH_VERSION.tar.gz"
+          tar -xzf "bash-$BASH_VERSION.tar.gz"
 
-      # 3. Extract
-      - name: Extract ncurses
+      - name: Build Bash
         run: |
-          tar -xzf ncurses-6.6.tar.gz
-
-      # 4. Configure for static build
-      - name: Configure ncurses
-        run: |
-          cd ncurses-6.6
+          cd bash-5.2.21
+          
+          # Configure for static linking
+          # --enable-static-link: Forces static linking
+          # --without-bash-malloc: Uses system malloc (musl's) which is generally preferred for static builds
+          export CFLAGS="-Os -static"
+          export LDFLAGS="-static"
+          
           ./configure \
-            --prefix=$PWD/build \
-            --with-shared=no \
-            --with-static=yes \
-            --enable-widec \
-            --without-debug \
-            --without-normal \
-            --without-manpages \
-            --without-tests \
-            --without-cxx-binding
-
-      # 5. Build and install
-      - name: Build and install
-        run: |
-          cd ncurses-6.6
+            --enable-static-link \
+            --without-bash-malloc \
+            --with-curses \
+            --enable-readline
+            
+          # Compile
           make -j$(nproc)
-          make install
+          
+          # Strip symbols to reduce size
+          strip bash
 
-      # 6. Package into tarball
-      - name: Package tarball
+      - name: Verify Static Build
         run: |
-          cd ncurses-6.6
-          tar -czf ncurses-6.6-static.tar.gz -C build .
+          cd bash-5.2.21
+          echo "--- Binary File Info ---"
+          file bash
+          
+          echo "--- LDD Output (Should say 'Not a dynamic executable') ---"
+          ldd bash || echo "Success: ldd failed as expected for static binary"
+          
+          echo "--- Version Check ---"
+          ./bash --version
 
-      # 7. Upload artifact (correct v4 version)
-      - name: Upload artifact
+      - name: Prepare Artifact
+        run: |
+          mkdir output
+          cp bash-5.2.21/bash output/bash-static
+          chmod +x output/bash-static
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ncurses-6.6-static
-          path: ncurses-6.6/ncurses-6.6-static.tar.gz
+          name: bash-static-binary
+          path: output/bash-static
+          if-no-files-found: error
