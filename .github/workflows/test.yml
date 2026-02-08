@@ -1,0 +1,37 @@
+name: Build Readline
+
+on:
+  workflow_dispatch:   # You can trigger it manually
+  push:
+    branches:
+      - main
+
+jobs:
+  build-readline:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the repo (optional)
+      - uses: actions/checkout@v3
+
+      # 2. Install dependencies (build tools)
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget tar
+
+      # 3. Download the GNU Readline tarball
+      - name: Download Readline 8.3
+        run: |
+          wget https://ftpmirror.gnu.org/gnu/readline/readline-8.3.tar.gz
+
+      # 4. Extract it
+      - name: Extract Readline
+        run: |
+          tar -xzf readline-8.3.tar.gz
+
+      # 5. Run ./configure
+      - name: Configure Readline
+        run: |
+          cd readline-8.3
+          ./configure
